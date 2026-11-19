@@ -1,0 +1,13 @@
+# 扩展运行时生成物（由 service 后端从 workitem 仓库同步）
+web/
+.data/
+
+# 宿主写入的安装态配置
+.storage.json
+.config.json
+.permissions.json
+
+# 杂项
+node_modules/
+*.log
+Thumbs.db

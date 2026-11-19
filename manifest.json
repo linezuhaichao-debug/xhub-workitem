@@ -1,0 +1,38 @@
+{
+  "id": "com.mangrids.workitem",
+  "name": "Workitem 工单",
+  "version": "0.4.0",
+  "runtime": "service",
+  "kind": "view",
+  "surfaces": [
+    "view"
+  ],
+  "openIn": [
+    "view"
+  ],
+  "entry": {
+    "view": "./view/index.html"
+  },
+  "backend": {
+    "entry": "./service/index.js",
+    "engine": {
+      "type": "node",
+      "minVersion": "24"
+    },
+    "cwd": "./service",
+    "port": 0,
+    "health": "/healthz"
+  },
+  "config": {
+    "repoPath": "D:\\TimeMachine\\sr_workitem",
+    "uiPort": 4777,
+    "openMode": "inline"
+  },
+  "permissions": [
+    "open-url"
+  ],
+  "icon": "./icon.svg",
+  "description": "打开 x-hub 时自动拉起本地 workitem 服务；侧栏一点，工作区里直接显示工单界面（同源副本 + 接口代理），被宿主限制时退回内置浏览器窗口",
+  "author": "ManGrids",
+  "category": "开发工具"
+}

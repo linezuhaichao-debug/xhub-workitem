@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Workitem 工单</title>
+<style>
+  /* ---- 主题：双声明 fallback（无宿主预览时也有正确的深浅色） ---- */
+  :root {
+    color-scheme: light;
+    --surface: var(--xhub-surface, rgba(255, 255, 255, 0.66));
+    --well: var(--xhub-bg-card, rgba(255, 255, 255, 0.9));
+    --ink: var(--xhub-text-1, #1f2230);
+    --ink-2: var(--xhub-text-2, #5b6070);
+    --ink-3: var(--xhub-text-3, #8a8f9e);
+    --line: var(--xhub-border, rgba(0, 0, 0, 0.1));
+    --primary: var(--xhub-accent, #2f6be6);
+    --green: var(--xhub-green, #1f9d55);
+    --red: var(--xhub-red, #d24b4b);
+    --yellow: var(--xhub-yellow, #c98a12);
+    --radius: var(--xhub-radius-lg, 12px);
+  }
+  :root[data-xhub-theme="dark"] {
+    color-scheme: dark;
+    --surface: var(--xhub-surface, rgba(255, 255, 255, 0.07));
+    --well: var(--xhub-bg-card, rgba(255, 255, 255, 0.05));
+    --ink: var(--xhub-text-1, #e8e9f0);
+    --ink-2: var(--xhub-text-2, #a2a7b8);
+    --ink-3: var(--xhub-text-3, #7c8192);
+    --line: var(--xhub-border, rgba(255, 255, 255, 0.12));
+    --primary: var(--xhub-accent, #8fa8ff);
+    --green: var(--xhub-green, #4ec98a);
+    --red: var(--xhub-red, #ff7b7b);
+    --yellow: var(--xhub-yellow, #e6b455);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    /* 整页边距标准：左上 0 / 右下 20（宿主对 view 零边距） */
+    padding: 0 20px 20px 0;
+    font-family: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    font-size: 13px;
+    line-height: 1.55;
+    background: var(--xhub-page-bg, transparent);
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 780px; }
+
+  header.page { display: flex; align-items: center; gap: 12px; padding: 4px 0 16px; }
+  .brand {
+    width: 40px; height: 40px; flex: 0 0 auto;
+    border-radius: 11px; overflow: hidden;
+    box-shadow: 0 4px 14px rgba(31, 95, 224, 0.28);
+  }
+  .brand img { display: block; width: 100%; height: 100%; }
+  .titles { min-width: 0; flex: 1 1 auto; }
+  h1 { margin: 0; font-size: 16px; font-weight: 650; letter-spacing: 0.2px; }
+  .sub { margin-top: 2px; color: var(--ink-2); font-size: 12px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .sub .sep { color: var(--ink-3); }
+
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 10px; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--well);
+    font-size: 12px; color: var(--ink-2); white-space: nowrap;
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-3); flex: 0 0 auto; }
+  .chip[data-tone="run"] .dot { background: var(--green); box-shadow: 0 0 0 3px rgba(31, 157, 85, 0.16); }
+  .chip[data-tone="run"] { color: var(--ink); }
+  .chip[data-tone="wait"] .dot { background: var(--yellow); animation: pulse 1.1s ease-in-out infinite; }
+  .chip[data-tone="err"] .dot { background: var(--red); box-shadow: 0 0 0 3px rgba(210, 75, 75, 0.16); }
+  .chip[data-tone="err"] { color: var(--red); }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    margin-bottom: 12px;
+  }
+  :root[data-xhub-wallpaper-clear="1"] .card {
+    border-color: transparent;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  }
+
+  .urlrow { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .url {
+    font-family: "Cascadia Mono", "Consolas", ui-monospace, monospace;
+    font-size: 13.5px; font-weight: 600; color: var(--ink);
+    word-break: break-all;
+  }
+  .url-note { color: var(--ink-3); font-size: 12px; }
+
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+  button {
+    font: inherit; color: var(--ink); background: var(--well);
+    border: 1px solid var(--line); border-radius: 9px;
+    padding: 7px 14px; cursor: pointer;
+    transition: border-color 0.15s ease, background 0.15s ease, opacity 0.15s ease;
+  }
+  button:hover:not(:disabled) { border-color: var(--primary); }
+  button:disabled { opacity: 0.55; cursor: default; }
+  button.primary {
+    background: var(--primary); border-color: transparent; color: #fff; font-weight: 600;
+    padding: 8px 20px;
+  }
+  :root[data-xhub-theme="dark"] button.primary { color: #10131c; }
+  button.primary:hover:not(:disabled) { filter: brightness(1.06); }
+  button.ghost { background: transparent; }
+
+  .note { margin: 12px 0 0; color: var(--ink-2); font-size: 12px; }
+  .note code, .meta dd code {
+    font-family: "Cascadia Mono", "Consolas", ui-monospace, monospace;
+    font-size: 12px; padding: 1px 5px; border-radius: 5px;
+    background: var(--well); border: 1px solid var(--line);
+  }
+
+  .meta {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 10px 16px; margin: 0 0 12px;
+  }
+  .meta div {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 10px; padding: 9px 12px; min-width: 0;
+  }
+  :root[data-xhub-wallpaper-clear="1"] .meta div { border-color: transparent; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.16); }
+  .meta dt { color: var(--ink-3); font-size: 11px; letter-spacing: 0.3px; margin-bottom: 3px; }
+  .meta dd { margin: 0; color: var(--ink); font-size: 12.5px; overflow-wrap: anywhere; }
+  .meta dd.ok { color: var(--green); }
+  .meta dd.bad { color: var(--red); }
+
+  details.card { padding: 12px 16px; }
+  details.card > summary {
+    cursor: pointer; color: var(--ink-2); font-size: 12.5px;
+    list-style: none; display: flex; align-items: center; gap: 6px;
+  }
+  details.card > summary::-webkit-details-marker { display: none; }
+  details.card > summary::before { content: "▸"; color: var(--ink-3); font-size: 11px; transition: transform 0.15s ease; }
+  details.card[open] > summary::before { transform: rotate(90deg); }
+  .settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px 14px; margin-top: 12px; }
+  label.field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--ink-2); }
+  label.field input {
+    font: inherit; font-size: 12.5px; color: var(--ink);
+    background: var(--well); border: 1px solid var(--line);
+    border-radius: 8px; padding: 6px 9px;
+  }
+  label.field input:focus { outline: none; border-color: var(--primary); }
+  label.field select {
+    font: inherit; font-size: 12.5px; color: var(--ink);
+    background: var(--well); border: 1px solid var(--line);
+    border-radius: 8px; padding: 6px 9px;
+  }
+  label.field select:focus { outline: none; border-color: var(--primary); }
+  .settings-actions { display: flex; gap: 8px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+
+  .banner {
+    border: 1px solid var(--line); border-left: 3px solid var(--red);
+    background: var(--surface); border-radius: 10px;
+    padding: 10px 14px; margin-bottom: 12px; color: var(--ink);
+    white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12.5px;
+  }
+  .banner[data-tone="warn"] { border-left-color: var(--yellow); }
+  .banner[data-tone="ok"] { border-left-color: var(--green); }
+  .banner .banner-actions { margin-top: 8px; display: flex; gap: 8px; }
+  pre.logs {
+    margin: 0 0 12px; padding: 12px;
+    background: var(--well); border: 1px solid var(--line); border-radius: 10px;
+    font-family: "Cascadia Mono", "Consolas", ui-monospace, monospace;
+    font-size: 11.5px; line-height: 1.5; color: var(--ink-2);
+    max-height: 320px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+  }
+  .muted { color: var(--ink-3); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="page">
+    <div class="brand"><img src="../icon.svg" alt="" /></div>
+    <div class="titles">
+      <h1>Workitem 工单</h1>
+      <div class="sub">
+        <span id="hostLine">本地工单服务</span>
+        <span class="sep">·</span>
+        <span id="repoLine" class="muted">检测中…</span>
+      </div>
+    </div>
+    <span class="chip" id="chip" data-tone="idle"><i class="dot"></i><span id="chipText">检测中</span></span>
+  </header>
+
+  <div class="banner" id="banner" hidden></div>
+
+  <section class="card">
+    <div class="urlrow">
+      <span class="url" id="urlText">http://127.0.0.1:4777</span>
+      <span class="url-note" id="urlNote">workitem 网页地址</span>
+    </div>
+    <div class="actions">
+      <button class="primary" id="btnOpen">在工作区打开</button>
+      <button id="btnWindow">窗口打开</button>
+      <button id="btnEnsure">重新检测</button>
+      <button class="ghost" id="btnLogs">查看日志</button>
+    </div>
+    <p class="note" id="note">
+      宿主的 CSP 不允许扩展页内嵌/跳转到外部网页，所以这里用「<strong>同源副本</strong>」：
+      把仓库里的 <code>workitems_ui/public</code> 同步到扩展自己的 <code>web/</code>（同源），
+      页面在 x-hub 里打开它，接口请求由后端转给 127.0.0.1:4777。
+    </p>
+  </section>
+
+  <dl class="meta">
+    <div><dt>服务</dt><dd id="mStatus">—</dd></div>
+    <div><dt>仓库</dt><dd id="mRepo">—</dd></div>
+    <div><dt>最近同步</dt><dd id="mSync">—</dd></div>
+    <div><dt>Git</dt><dd id="mGit">—</dd></div>
+  </dl>
+
+  <details class="card" id="settingsCard">
+    <summary>设置（仓库路径 / 端口 / 打开方式）</summary>
+    <div class="settings">
+      <label class="field">workitem 仓库根目录
+        <input id="repoInput" spellcheck="false" placeholder="D:\TimeMachine\sr_workitem" />
+      </label>
+      <label class="field">网页服务端口
+        <input id="portInput" inputmode="numeric" placeholder="4777" />
+      </label>
+      <label class="field">打开方式
+        <select id="modeSelect">
+          <option value="inline">工作区内显示（默认）</option>
+          <option value="window">内置浏览器窗口</option>
+        </select>
+      </label>
+    </div>
+    <div class="settings-actions">
+      <button id="btnSave">保存并检测</button>
+      <button class="ghost" id="btnRetryInline">重新同步并打开</button>
+      <span class="muted" id="saveHint"></span>
+    </div>
+  </details>
+
+  <pre class="logs" id="logs" hidden></pre>
+</div>
+
+<script>
+  // 桥 API 由宿主注入，不要 import 任何包。
+  const $ = (id) => document.getElementById(id)
+  const AUTO_OPEN_GAP_MS = 30 * 1000 // 窗口模式下 30s 内不重复弹窗，避免来回切视图开一堆标签
+
+  const state = {
+    ready: false,
+    status: 'idle',
+    url: 'http://127.0.0.1:4777',
+    repoPath: '',
+    uiPort: 4777,
+    openMode: 'inline',
+    health: null,
+    lastError: '',
+    notice: '',
+    hostServiceReady: null,
+    unauthorized: false,
+  }
+
+  function hasBridge() {
+    return typeof window.xhub !== 'undefined' && window.xhub && typeof window.xhub.service === 'object'
+  }
+
+  function errText(err) {
+    if (!err) return '未知错误'
+    const code = err.code ? String(err.code) + '：' : ''
+    return code + (err.message || String(err))
+  }
+
+  function sleep(ms) {
+    return new Promise((r) => setTimeout(r, ms))
+  }
+
+  function fmtTime(iso) {
+    if (!iso) return '—'
+    const d = new Date(iso)
+    if (Number.isNaN(d.getTime())) return String(iso)
+    const pad = (n) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+  }
+
+  function setBanner(text, tone, actions) {
+    const el = $('banner')
+    if (!text) {
+      el.hidden = true
+      el.textContent = ''
+      return
+    }
+    el.hidden = false
+    el.dataset.tone = tone || 'error'
+    el.textContent = ''
+    const body = document.createElement('div')
+    body.textContent = text
+    el.appendChild(body)
+    if (actions && actions.length) {
+      const row = document.createElement('div')
+      row.className = 'banner-actions'
+      actions.forEach(({ label, onClick }) => {
+        const b = document.createElement('button')
+        b.textContent = label
+        b.addEventListener('click', onClick)
+        row.appendChild(b)
+      })
+      el.appendChild(row)
+    }
+  }
+
+  function applySnapshot(snap) {
+    if (!snap) return
+    state.status = snap.status || 'idle'
+    state.url = snap.url || state.url
+    state.repoPath = snap.repoPath || state.repoPath
+    state.uiPort = snap.uiPort || state.uiPort
+    state.health = snap.health || null
+    state.lastError = snap.lastError || ''
+    if (state.status === 'running') state.hostServiceReady = true
+    render()
+  }
+
+  function chipFor(status) {
+    if (status === 'running') return { tone: 'run', text: '服务在线' }
+    if (status === 'starting' || status === 'checking') return { tone: 'wait', text: '启动中…' }
+    if (status === 'error') return { tone: 'err', text: '启动失败' }
+    return { tone: 'idle', text: '未运行' }
+  }
+
+  function render() {
+    const chip = chipFor(state.status)
+    $('chip').dataset.tone = chip.tone
+    $('chipText').textContent = chip.text
+    $('urlText').textContent = state.url
+
+    const running = state.status === 'running'
+    const busy = state.status === 'starting' || state.status === 'checking'
+    $('btnOpen').disabled = busy
+    $('btnEnsure').disabled = busy
+    $('btnWindow').disabled = busy
+    $('btnOpen').textContent = running ? (state.openMode === 'window' ? '打开 Workitem' : '在工作区打开') : '启动并打开'
+    $('btnWindow').hidden = state.openMode === 'window'
+
+    $('repoLine').textContent = state.repoPath || '未配置仓库路径'
+    $('mStatus').textContent = running ? '在线' : busy ? '启动中' : state.status === 'error' ? '启动失败' : '未运行'
+    $('mStatus').className = running ? 'ok' : state.status === 'error' ? 'bad' : ''
+    $('mStatus').title = state.url
+    const fullRepo = (state.health && state.health.repoPath) || state.repoPath || ''
+    $('mRepo').textContent = fullRepo ? (fullRepo.split(/[\\/]/).filter(Boolean).pop() || fullRepo) : '—'
+    $('mRepo').title = fullRepo
+    $('mSync').textContent = state.health && state.health.syncAt ? fmtTime(state.health.syncAt) : '—'
+    if (state.health && state.health.syncSkipped) $('mSync').textContent += '（跳过）'
+    const gitOk = state.health ? state.health.gitOk : null
+    $('mGit').textContent = gitOk === null ? '—' : gitOk ? '可用' : '不可用'
+    $('mGit').className = gitOk === null ? '' : gitOk ? 'ok' : 'bad'
+    $('mGit').title = state.health && state.health.gitReason ? state.health.gitReason : ''
+
+    if (state.status === 'error' && state.lastError) {
+      setBanner(state.lastError, 'error')
+    } else if (state.unauthorized) {
+      setBanner('本地后端未获信任，无法启动 workitem 服务。', 'warn', [
+        { label: '去授权', onClick: () => window.xhub.openPermissions && window.xhub.openPermissions() },
+      ])
+    } else if (state.status === 'running' && state.notice) {
+      setBanner(state.notice, 'ok')
+    } else if (state.hostServiceReady === false) {
+      setBanner('宿主报告扩展后端未就绪。可右键侧栏图标 →「重启后端」，或重启一次 x-hub。', 'warn')
+    } else {
+      setBanner('', 'error')
+    }
+  }
+
+  async function callService(path, init) {
+    const res = await window.xhub.service.request(path, init)
+    const data = await res.json()
+    if (!data || res.status >= 400) {
+      throw new Error((data && (data.error || data.message)) || `HTTP ${res.status}`)
+    }
+    return data
+  }
+
+  function handleServiceError(err) {
+    const msg = errText(err)
+    if (/PERMISSION_DENIED|未获信任|未授权/i.test(msg)) {
+      state.unauthorized = true
+      state.status = 'error'
+      state.lastError = ''
+      render()
+      return
+    }
+    state.status = 'error'
+    state.lastError = msg
+    render()
+  }
+
+  async function ensureAndPoll({ autoOpen = false } = {}) {
+    state.unauthorized = false
+    state.notice = ''
+    state.lastError = ''
+    state.status = 'checking'
+    render()
+    try {
+      await callService('/api/ensure', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repoPath: state.repoPath, uiPort: state.uiPort }),
+      })
+    } catch (err) {
+      handleServiceError(err)
+      return false
+    }
+
+    const deadline = Date.now() + 120 * 1000
+    while (Date.now() < deadline) {
+      let snap
+      try {
+        snap = await callService('/api/status')
+      } catch (err) {
+        handleServiceError(err)
+        return false
+      }
+      applySnapshot(snap)
+      if (snap.status === 'running') {
+        if (autoOpen) await autoOpenRoute()
+        return true
+      }
+      if (snap.status === 'error') return false
+      await sleep(900)
+    }
+    state.status = 'error'
+    state.lastError = '等待 workitem 服务启动超时（120s）。点「查看日志」看后端输出。'
+    render()
+    return false
+  }
+
+  async function openSite() {
+    const url = state.url
+    try {
+      await window.xhub.openExternal(url)
+      state.notice = '已用 x-hub 浏览器窗口打开 workitem：' + url + '（若窗口没出来，点「窗口打开」再试一次）'
+      render()
+      return true
+    } catch (err) {
+      const msg = errText(err)
+      state.notice = ''
+      state.lastError = /PERMISSION_DENIED/.test(msg)
+        ? '打开外链被拒绝（缺 open-url 权限），请在扩展设置里允许「打开链接」。'
+        : msg
+      render()
+      return false
+    }
+  }
+
+  // 同源副本方案：宿主的 CSP 只允许扩展页在自己的源里导航，
+  // 所以先把仓库里的 workitems_ui/public 同步到扩展的 web/，再跳过去（/api 由 shim 转到后端）。
+  async function enterWorkspace() {
+    let synced = null
+    try {
+      synced = await callService('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repoPath: state.repoPath }),
+      })
+    } catch (err) {
+      handleServiceError(err)
+      return false
+    }
+    if (!synced || synced.ok !== true) {
+      state.notice = '同步 workitem 前端失败：' + ((synced && synced.error) || '未知原因') + '；已改用窗口打开。'
+      render()
+      return openSite()
+    }
+    const target = new URL('../web/index.html', location.href).href
+    state.notice = ''
+    render()
+    location.replace(target)
+    return true
+  }
+
+  async function autoOpenRoute() {
+    if (state.openMode === 'window') return openInWindow()
+    return enterWorkspace()
+  }
+
+  async function openInWindow() {
+    let last = 0
+    try {
+      last = Number(await window.xhub.storage.get('autoOpenedAt')) || 0
+    } catch (_) {
+      last = 0
+    }
+    if (last && Date.now() - last < AUTO_OPEN_GAP_MS) {
+      state.notice = '刚刚已为你用窗口打开过 workitem；需要再开一次就点「窗口打开」。'
+      render()
+      return
+    }
+    try {
+      await window.xhub.storage.set('autoOpenedAt', Date.now())
+    } catch (_) {
+      /* 存储失败不影响打开 */
+    }
+    await openSite()
+  }
+
+  async function retryInline() {
+    state.notice = ''
+    state.openMode = 'inline'
+    $('modeSelect').value = 'inline'
+    render()
+    if (state.status !== 'running') {
+      const ok = await ensureAndPoll({ autoOpen: false })
+      if (!ok) return
+    }
+    await enterWorkspace()
+  }
+
+  async function toggleLogs() {
+    const el = $('logs')
+    if (!el.hidden) {
+      el.hidden = true
+      return
+    }
+    el.hidden = false
+    el.textContent = '读取中…'
+    try {
+      const data = await callService('/api/logs')
+      const parts = []
+      if (data.err && data.err.trim()) parts.push('--- 错误输出 ---\n' + data.err.trim())
+      if (data.out && data.out.trim()) parts.push('--- 标准输出（尾部）---\n' + data.out.trim())
+      el.textContent = parts.length ? parts.join('\n\n') : '暂无日志：workitem 服务还没被拉起过。'
+    } catch (err) {
+      el.textContent = '读取日志失败：' + errText(err)
+    }
+  }
+
+  async function saveSettings() {
+    const repoPath = $('repoInput').value.trim()
+    const uiPort = Number($('portInput').value.trim())
+    const openMode = $('modeSelect').value === 'window' ? 'window' : 'inline'
+    if (!repoPath) {
+      $('saveHint').textContent = '仓库路径不能为空'
+      return
+    }
+    if (!Number.isInteger(uiPort) || uiPort <= 0 || uiPort > 65535) {
+      $('saveHint').textContent = '端口要是 1–65535 的整数'
+      return
+    }
+    try {
+      await window.xhub.config.set('repoPath', repoPath)
+      await window.xhub.config.set('uiPort', uiPort)
+      await window.xhub.config.set('openMode', openMode)
+      $('saveHint').textContent = '已保存'
+    } catch (err) {
+      $('saveHint').textContent = '保存失败：' + errText(err)
+      return
+    }
+    state.repoPath = repoPath
+    state.uiPort = uiPort
+    state.openMode = openMode
+    state.url = 'http://127.0.0.1:' + uiPort
+    render()
+    await ensureAndPoll({ autoOpen: false })
+  }
+
+  async function boot() {
+    $('btnOpen').addEventListener('click', async () => {
+      if (!hasBridge()) return
+      if (state.status === 'running') {
+        await autoOpenRoute()
+      } else {
+        const ok = await ensureAndPoll({ autoOpen: false })
+        if (ok) await autoOpenRoute()
+      }
+    })
+    $('btnWindow').addEventListener('click', async () => {
+      if (!hasBridge()) return
+      if (state.status === 'running') {
+        await openSite()
+      } else {
+        const ok = await ensureAndPoll({ autoOpen: false })
+        if (ok) await openSite()
+      }
+    })
+    $('btnRetryInline').addEventListener('click', () => {
+      if (!hasBridge()) return
+      retryInline()
+    })
+    $('btnEnsure').addEventListener('click', () => {
+      if (!hasBridge()) return
+      ensureAndPoll({ autoOpen: false })
+    })
+    $('btnLogs').addEventListener('click', () => {
+      if (!hasBridge()) return
+      toggleLogs()
+    })
+    $('btnSave').addEventListener('click', () => {
+      if (!hasBridge()) return
+      saveSettings()
+    })
+    $('modeSelect').addEventListener('change', () => {
+      state.openMode = $('modeSelect').value === 'window' ? 'window' : 'inline'
+      render()
+    })
+
+    if (!hasBridge()) {
+      state.status = 'idle'
+      $('hostLine').textContent = '浏览器预览模式（没有 x-hub 桥，无法拉服务）'
+      render()
+      return
+    }
+
+    try {
+      const info = await window.xhub.runtime.info()
+      state.hostServiceReady = info && typeof info.serviceReady === 'boolean' ? info.serviceReady : null
+      $('hostLine').textContent = '扩展 v' + ((info && info.version) || '0.1.0')
+    } catch (_) {
+      /* 拿不到 info 不致命 */
+    }
+
+    try {
+      const repoPath = await window.xhub.config.get('repoPath')
+      const uiPort = await window.xhub.config.get('uiPort')
+      const openMode = await window.xhub.config.get('openMode')
+      if (repoPath) state.repoPath = String(repoPath)
+      const port = Number(uiPort)
+      if (Number.isInteger(port) && port > 0 && port < 65536) state.uiPort = port
+      if (openMode === 'window' || openMode === 'inline') state.openMode = openMode
+      state.url = 'http://127.0.0.1:' + state.uiPort
+    } catch (_) {
+      /* 用 manifest.config 的默认值 */
+    }
+
+    $('repoInput').value = state.repoPath
+    $('portInput').value = String(state.uiPort)
+    $('modeSelect').value = state.openMode
+    // 同源副本页拿不到 x-hub 桥时会带着 ?nobridge=1 退回来：直接切窗口模式
+    let nobridge = false
+    try {
+      nobridge = new URLSearchParams(location.search).get('nobridge') === '1'
+    } catch (_) {
+      nobridge = false
+    }
+    if (nobridge) {
+      state.openMode = 'window'
+      state.notice = '同源副本页没拿到 x-hub 桥（宿主可能只给入口页注入了桥），已改用窗口打开。把这句告诉我，我换方案。'
+      $('modeSelect').value = 'window'
+    }
+    render()
+
+    // 「随应用启动」时本页会在后台被拉起（document 隐藏），此时只负责把服务拉起来，不弹窗；
+    // 等你第一次点开这个视图（visible）再自动进入工作区/打开窗口，避免每次启动 x-hub 都自动弹窗。
+    const autoOpenOnBoot = document.visibilityState === 'visible'
+    const bootEnsure = ensureAndPoll({ autoOpen: autoOpenOnBoot })
+
+    if (!autoOpenOnBoot) {
+      let armed = true
+      const onVisible = async () => {
+        if (!armed || document.visibilityState !== 'visible') return
+        armed = false
+        document.removeEventListener('visibilitychange', onVisible)
+        await bootEnsure
+        if (state.status === 'running') await autoOpenRoute()
+      }
+      document.addEventListener('visibilitychange', onVisible)
+    }
+  }
+
+  boot()
+</script>
+</body>
+</html>
