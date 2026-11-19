@@ -13,7 +13,8 @@
   window.__xhubAllView = true
 
   var STORE_KEY = 'xhub.workitem.all.assignee'
-  var scope = { active: false, assignee: '' }
+  var PAGE_SIZE = 30
+  var scope = { active: false, assignee: '', expanded: {}, inHtml: false }
   var memberSig = ''
 
   function $(id) {
@@ -49,6 +50,10 @@
       'border-radius:6px;padding:3px 8px;max-width:190px;cursor:pointer;}',
       '.xhub-all-owner select:focus{outline:none;border-color:var(--primary);}',
       'body.xhub-all-mode #personalPage .personal-head h2{color:var(--text);}',
+      '.xhub-all-more{display:flex;align-items:center;gap:10px;padding:10px 12px;border-top:1px dashed var(--line);',
+      'color:var(--muted);font-size:12px;}',      '.xhub-all-more button{font:inherit;color:var(--primary);background:var(--surface);border:1px solid var(--line-strong);',
+      'border-radius:6px;padding:4px 12px;cursor:pointer;}',
+      '.xhub-all-more button:hover{border-color:var(--primary);background:var(--primary-soft);}',
     ].join('')
     document.head.appendChild(style)
   }
@@ -217,13 +222,87 @@
   }
 
   function refreshPersonal() {
+    var scrollY = window.scrollY
     try {
       renderPersonalView()
     } catch (e) { /* 忽略 */ }
+    if (scrollY) {
+      requestAnimationFrame(function () { window.scrollTo(0, scrollY) })
+    }
+  }
+
+  // 每个分区首屏只渲染 30 行，行尾给「加载全部」；点开后再渲染整个分区。
+  function installSectionPaging() {
+    var originalItems = window.personalSectionItems
+    var originalHtml = window.personalSectionHtml
+    if (typeof originalItems !== 'function' || typeof originalHtml !== 'function') return
+
+    window.personalSectionItems = function (section, settings) {
+      var rows = originalItems.call(this, section, settings)
+      if (!scope.active || !scope.inHtml || !section || !rows || !rows.length) return rows
+      if (scope.expanded[section.id]) return rows
+      return rows.slice(0, PAGE_SIZE)
+    }
+
+    window.personalSectionHtml = function (section) {
+      if (!scope.active || !section) return originalHtml.apply(this, arguments)
+      var total = 0
+      try {
+        total = originalItems.call(this, section, loadPersonalSettings(section)).length
+      } catch (e) {
+        total = 0
+      }
+      scope.inHtml = true
+      var html
+      try {
+        html = originalHtml.apply(this, arguments)
+      } finally {
+        scope.inHtml = false
+      }
+      var expanded = Boolean(scope.expanded[section.id])
+      var shown = expanded ? total : Math.min(PAGE_SIZE, total)
+      html = html.replace(/(<h3>[^<]*<\/h3>\s*<strong>)\d+(<\/strong>)/, function (match, head, tail) {
+        return head + total + tail
+      })
+      if (!total || total <= PAGE_SIZE) return html
+      if (/class="personal-section collapsed"/.test(html)) return html
+      var footer = expanded
+        ? '<div class="xhub-all-more"><span>已显示全部 ' + total + ' 条</span>'
+          + '<button type="button" data-xhub-all-less="' + section.id + '">收起</button></div>'
+        : '<div class="xhub-all-more"><button type="button" data-xhub-all-more="' + section.id + '">加载全部 ' + total + ' 条</button>'
+          + '<span>已显示前 ' + shown + ' 条</span></div>'
+      var sectionEnd = html.lastIndexOf('</section>')
+      if (sectionEnd >= 0) html = html.slice(0, sectionEnd) + footer + html.slice(sectionEnd)
+      else html += footer
+      return html
+    }
+  }
+
+  function bindSectionPaging() {
+    var host = document.getElementById('personalSections')
+    if (!host) return
+    host.addEventListener('click', function (event) {
+      var target = event.target
+      if (!target || !target.closest) return
+      var more = target.closest('[data-xhub-all-more]')
+      if (more) {
+        event.preventDefault()
+        scope.expanded[more.getAttribute('data-xhub-all-more')] = true
+        refreshPersonal()
+        return
+      }
+      var less = target.closest('[data-xhub-all-less]')
+      if (less) {
+        event.preventDefault()
+        delete scope.expanded[less.getAttribute('data-xhub-all-less')]
+        refreshPersonal()
+      }
+    }, true)
   }
 
   function enterAll() {
     scope.active = true
+    scope.expanded = {}
     try {
       if (typeof setMyView === 'function') setMyView('all')
       state.activeModule = 'my'
@@ -246,6 +325,7 @@
   function exitAll() {
     if (!scope.active) return
     scope.active = false
+    scope.expanded = {}
     restoreUi()
   }
 
@@ -300,9 +380,11 @@
   function boot() {
     injectStyle()
     patchSubstance()
+    installSectionPaging()
     buildRailButton()
     bindRailExit()
     ensureAssigneeUi()
+    bindSectionPaging()
     watchHeadActions()
     scope.assignee = assigneeFromQuery() || readStored()
     if (autostart()) enterAll()
