@@ -306,6 +306,15 @@
     try {
       if (typeof setMyView === 'function') setMyView('all')
       state.activeModule = 'my'
+      // 30 秒内刚拉过全量就复用，来回切视图不再重复走 7 MB 的列表接口
+      var updatedAt = Number(state.allItemsUpdatedAt) || 0
+      var fresh = Array.isArray(state.allItems) && state.allItems.length > 0 && Date.now() - updatedAt < 30000
+      if (fresh) {
+        if (typeof renderModulePages === 'function') renderModulePages()
+        applyAllUi()
+        refreshPersonal()
+        return
+      }
       var loading = loadItems({ keepSelection: false, loadAll: true })
       if (loading && typeof loading.then === 'function') {
         loading

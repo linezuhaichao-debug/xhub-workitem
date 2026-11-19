@@ -77,6 +77,7 @@
     }
     if (options.bodyText != null) payload.body = options.bodyText
     if (options.bodyBase64 != null) payload.bodyBase64 = options.bodyBase64
+    if (options.plain) payload.plain = true
     return bridge.service
       .request('/api/proxy', {
         method: 'POST',
@@ -88,6 +89,38 @@
         if (!data || data.error) throw new Error((data && data.error) || '代理请求失败')
         return data
       })
+  }
+
+  // 大响应由后端 gzip 后 base64 传过来：这里用 DecompressionStream 还原成文本。
+  function gunzipText(base64) {
+    var binary = atob(base64 || '')
+    var bytes = new Uint8Array(binary.length)
+    for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+    if (typeof DecompressionStream !== 'function') {
+      return Promise.reject(new Error('DecompressionStream 不可用'))
+    }
+    var stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))
+    return new Response(stream).text()
+  }
+
+  function toResponse(data) {
+    var outHeaders = {}
+    if (data.headers) {
+      Object.keys(data.headers).forEach(function (key) {
+        if (data.headers[key]) outHeaders[key] = data.headers[key]
+      })
+    }
+    var status = Number(data.status) || 200
+    if (status === 204 || status === 304) return Promise.resolve(new Response(null, { status: status, headers: outHeaders }))
+    if (data.encoding === 'gzip-base64') {
+      return gunzipText(data.body).then(function (text) {
+        return new Response(text, { status: status, headers: outHeaders })
+      })
+    }
+    if (data.encoding === 'base64') {
+      return Promise.resolve(new Response(base64ToBlob(data.body, data.headers && data.headers['content-type']), { status: status, headers: outHeaders }))
+    }
+    return Promise.resolve(new Response(data.body == null ? '' : String(data.body), { status: status, headers: outHeaders }))
   }
 
   // ---- fetch 覆写：/api/* 与 /attachments/* 全部走桥 ----
@@ -124,19 +157,15 @@
           bodyBase64: extra.bodyBase64,
         })
       })
-      .then(function (data) {
-        var outHeaders = {}
-        if (data.headers) {
-          Object.keys(data.headers).forEach(function (key) {
-            if (data.headers[key]) outHeaders[key] = data.headers[key]
-          })
-        }
-        var status = Number(data.status) || 200
-        var payload
-        if (status === 204 || status === 304) payload = null
-        else if (data.encoding === 'base64') payload = base64ToBlob(data.body, data.headers && data.headers['content-type'])
-        else payload = data.body == null ? '' : String(data.body)
-        return new Response(payload, { status: status, headers: outHeaders })
+      .then(toResponse)
+      .catch(function (err) {
+        // 极老的 webview 没有 DecompressionStream：退回明文再取一次
+        return proxy(target, {
+          method: method,
+          headers: headers,
+          bodyText: body != null && typeof body === 'string' ? body : undefined,
+          plain: true,
+        }).then(toResponse).catch(function () { throw err })
       })
   }
 

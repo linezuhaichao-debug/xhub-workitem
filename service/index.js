@@ -1,4 +1,4 @@
-﻿'use strict'
+'use strict'
 
 // com.mangrids.workitem 的 service 后端。
 //
@@ -15,6 +15,7 @@
 
 const http = require('http')
 const net = require('net')
+const zlib = require('zlib')
 const fs = require('fs')
 const path = require('path')
 const { spawn } = require('child_process')
@@ -282,7 +283,49 @@ function syncSite() {
 }
 // ---------- 反代 workitem 的 /api 与 /attachments ----------
 
+// 列表接口一次返回 7 MB+，原样过桥会把页面卡住几秒，所以：
+// 1) 文本响应超过 128 KB 先 gzip 再 base64，页面侧用 DecompressionStream 还原；
+// 2) GET /api/workitems* 结果缓存 20 秒，来回切视图不再重复拉。
+const PROXY_CACHE_TTL_MS = 20000
+const PROXY_CACHE_MAX_BYTES = 64 * 1024 * 1024
+const GZIP_MIN_BYTES = 128 * 1024
+const proxyCache = new Map()
+let proxyCacheBytes = 0
+
+function proxyCacheKey(targetPath, method) {
+  return method === 'GET' && /^\/api\/workitems(\?|$)/.test(targetPath) ? targetPath : ''
+}
+
+function proxyCacheGet(key) {
+  const hit = proxyCache.get(key)
+  if (!hit) return null
+  if (Date.now() - hit.at > PROXY_CACHE_TTL_MS) {
+    proxyCacheBytes -= hit.size
+    proxyCache.delete(key)
+    return null
+  }
+  return hit.payload
+}
+
+function proxyCacheSet(key, payload, size) {
+  if (proxyCacheBytes + size > PROXY_CACHE_MAX_BYTES) {
+    for (const [oldKey, entry] of proxyCache) {
+      proxyCache.delete(oldKey)
+      proxyCacheBytes -= entry.size
+      if (proxyCacheBytes + size <= PROXY_CACHE_MAX_BYTES) break
+    }
+  }
+  proxyCache.set(key, { at: Date.now(), payload, size })
+  proxyCacheBytes += size
+}
+
 function proxyToWorkitem(targetPath, payload) {
+  const method = String(payload.method || 'GET').toUpperCase()
+  const cacheKey = proxyCacheKey(targetPath, method)
+  if (cacheKey) {
+    const cached = proxyCacheGet(cacheKey)
+    if (cached) return Promise.resolve(cached)
+  }
   return new Promise((resolve) => {
     let bodyBuf = null
     if (payload.bodyBase64) bodyBuf = Buffer.from(String(payload.bodyBase64), 'base64')
@@ -302,7 +345,7 @@ function proxyToWorkitem(targetPath, payload) {
         host: '127.0.0.1',
         port: state.uiPort,
         path: targetPath,
-        method: String(payload.method || 'GET').toUpperCase(),
+        method,
         headers,
         timeout: 60000,
       },
@@ -313,16 +356,28 @@ function proxyToWorkitem(targetPath, payload) {
           const buf = Buffer.concat(chunks)
           const contentType = String(res.headers['content-type'] || 'application/octet-stream')
           const isText = /^(application\/(json|javascript|xml|x-ndjson)|text\/|image\/svg)/i.test(contentType)
-          resolve({
+          let encoding = isText ? 'utf8' : 'base64'
+          let body = isText ? buf.toString('utf8') : buf.toString('base64')
+          if (isText && !payload.plain && buf.length >= GZIP_MIN_BYTES) {
+            try {
+              body = zlib.gzipSync(buf, { level: 6 }).toString('base64')
+              encoding = 'gzip-base64'
+            } catch (_) {
+              /* 压缩失败退回明文 */
+            }
+          }
+          const result = {
             status: res.statusCode || 500,
             headers: {
               'content-type': contentType,
               'content-disposition': String(res.headers['content-disposition'] || ''),
             },
-            encoding: isText ? 'utf8' : 'base64',
-            body: isText ? buf.toString('utf8') : buf.toString('base64'),
+            encoding,
+            body,
             bytes: buf.length,
-          })
+          }
+          if (cacheKey) proxyCacheSet(cacheKey, result, buf.length)
+          resolve(result)
         })
       }
     )
@@ -670,6 +725,13 @@ server.listen(PORT, HOST, () => {
         site.error = err.message
         log('启动同步同源副本失败：', err.message)
       }
+      // 预热列表缓存：workitem 的 /api/workitems?limit=20000 有 7 MB，
+      // 提前拉一次放进 20 秒缓存，第一次点「全部」就不用等它。
+      setTimeout(() => {
+        proxyToWorkitem('/api/workitems?limit=20000', { method: 'GET', headers: {} })
+          .then((r) => log('列表缓存预热：', r.encoding, r.bytes))
+          .catch(() => {})
+      }, 1200)
     })
     .catch((err) => log('启动探活异常：', err && err.message))
 })

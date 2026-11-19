@@ -1,4 +1,4 @@
-# Workitem 工单（x-hub 扩展）
+﻿# Workitem 工单（x-hub 扩展）
 
 把本地 **workitem**（Git 工单工具，`D:\TimeMachine\sr_workitem`）接进 x-hub：
 
@@ -53,6 +53,15 @@ workitem 仓库一行没改，全部在扩展侧注入（`assets/xhub-allview.js
 
 > 只在扩展里生效；直接用浏览器开 `127.0.0.1:4777` 还是原来的三个页签。
 
+## 为什么列表不再卡（0.4.2）
+
+| 问题 | 处理 |
+|---|---|
+| `/api/workitems?limit=20000` 一次 7.3 MB，过桥后页面要 5 秒 | 后端对超过 128 KB 的文本响应 gzip + base64，包体 8.2 MB → 1.0 MB，页面用 `DecompressionStream` 还原 |
+| 每次进「全部」都重拉 | `GET /api/workitems*` 缓存 20 秒；后端启动后预热一次 |
+| 来回切视图又拉一遍 | 「全部」视图 30 秒内复用内存里的全量数据 |
+
+实测：冷调用约 2.1 s（workitem 自己冷启动那一次），命中缓存 18–95 ms。
 ## 同步为什么不触发宿主热重载循环
 
 `web/` 在扩展目录里，宿主会监控开发目录做热重载。所以同步改成**只在内容变化时写盘**：
