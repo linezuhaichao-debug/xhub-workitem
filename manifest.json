@@ -1,7 +1,7 @@
 {
   "id": "com.mangrids.workitem",
   "name": "Workitem 工单",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "runtime": "service",
   "kind": "view",
   "surfaces": [
@@ -36,4 +36,5 @@
   "author": "ManGrids",
   "category": "开发工具"
 }
+
 

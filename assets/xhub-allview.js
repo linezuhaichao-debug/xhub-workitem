@@ -1,4 +1,4 @@
-/* x-hub Workitem 扩展：在工作区界面里加一个「全部」页签。
+﻿/* x-hub Workitem 扩展：在工作区界面里加一个「全部」页签。
  *
  * 复用个人视图的整套布局与渲染，只做三件事：
  * 1) 左栏「甘特」下面加一个 全部 入口；
@@ -192,6 +192,7 @@
   function applyAllUi() {
     if (!scope.active) return
     ensureAssigneeUi()
+    enhanceCreateDialog()
     document.body.classList.add('xhub-all-mode')
     var page = $('personalPage')
     if (page) {
@@ -278,8 +279,116 @@
     }
   }
 
-  function bindSectionPaging() {
-    var host = document.getElementById('personalSections')
+  // ---- 创建工单弹窗：默认带出当前迭代，校验失败给常驻提示（toast 容易漏看） ----
+  function preferredIteration() {
+    try {
+      if (typeof personalSectionDefs !== 'undefined' && typeof loadPersonalSettings === 'function') {
+        var order = ['production', 'defects', 'requirements']
+        for (var i = 0; i < order.length; i += 1) {
+          var def = null
+          for (var j = 0; j < personalSectionDefs.length; j += 1) {
+            if (personalSectionDefs[j].id === order[i]) { def = personalSectionDefs[j]; break }
+          }
+          if (!def) continue
+          var settings = loadPersonalSettings(def)
+          var picked = settings && Array.isArray(settings.iteration) ? settings.iteration.filter(Boolean) : []
+          if (picked.length === 1) return picked[0]
+        }
+      }
+      if (state && state.activeIteration && state.activeIteration !== '__all__') return state.activeIteration
+    } catch (e) { /* 忽略 */ }
+    return ''
+  }
+
+  function enhanceCreateDialog() {
+    var form = document.getElementById('createForm')
+    if (!form || form.getAttribute('data-xhub-create') === '1') return
+    form.setAttribute('data-xhub-create', '1')
+
+    var hint = document.createElement('div')
+    hint.id = 'xhubCreateHint'
+    hint.style.cssText = 'display:none;margin:0 18px 10px;padding:8px 10px;border-radius:8px;' +
+      'background:#fff1f0;color:#c0341d;border:1px solid #ffc9c0;font-size:12px;line-height:1.5'
+    var actions = form.querySelector('.form-actions')
+    if (actions && actions.parentNode) actions.parentNode.insertBefore(hint, actions)
+    else form.appendChild(hint)
+
+    function missingField() {
+      var title = document.getElementById('createTitle')
+      if (!title || !String(title.value || '').trim()) return '标题不能为空'
+      var assignee = document.getElementById('createAssigneeSearch')
+      if (!assignee || !String(assignee.value || '').trim()) return '请选择执行人'
+      var iteration = document.getElementById('createIteration')
+      if (!iteration || !iteration.value) return '请选择「迭代」（下拉默认是「未指定」，无法创建）'
+      return ''
+    }
+
+    function refreshHint() {
+      var msg = missingField()
+      if (msg) {
+        hint.textContent = msg
+        hint.style.display = ''
+      } else {
+        hint.textContent = ''
+        hint.style.display = 'none'
+      }
+      return msg
+    }
+
+    function describeInvalid(node) {
+      if (!node) return '还有必填项没填'
+      if (node.id === 'createTitle') return '请填写标题'
+      if (node.id === 'createAssigneeSearch') return '请选择执行人'
+      if (node.id === 'createIteration') return '请选择「迭代」：下拉现在是「未指定」，不能创建'
+      var label = node.closest && node.closest('label')
+      var text = label ? String(label.textContent || '').trim().split('\n')[0] : ''
+      return text ? '请填写「' + text.slice(0, 12) + '」' : '还有必填项没填'
+    }
+    function markInvalid(node) {
+      if (!node) return
+      node.style.outline = '2px solid #e04b3a'
+      node.style.outlineOffset = '1px'
+      node.addEventListener('input', function clear() {
+        node.style.outline = ''
+        node.removeEventListener('input', clear)
+      })
+    }
+    // 浏览器原生校验（required）会在 submit 事件之前就拦下：点「创建」毫无反应就是这个原因。
+    // 所以在按钮点击后主动检查 :invalid，把原因常驻显示出来。
+    function showInvalidHint() {
+      var invalid = form.querySelector(':invalid')
+      if (!invalid) { hint.textContent = ''; hint.style.display = 'none'; return '' }
+      hint.textContent = describeInvalid(invalid)
+      hint.style.display = ''
+      markInvalid(invalid)
+      return hint.textContent
+    }
+    var submitBtn = document.getElementById('createSubmitBtn')
+    if (submitBtn) {
+      submitBtn.addEventListener('click', function () {
+        setTimeout(showInvalidHint, 0)
+      }, true)
+    }
+    document.addEventListener('submit', function (event) {
+      if (event.target !== form) return
+      var msg = refreshHint()
+      if (!msg) showInvalidHint()
+    }, true)
+    form.addEventListener('input', function () {
+      if (hint.style.display !== 'none' && !missingField()) {
+        hint.textContent = ''
+        hint.style.display = 'none'
+      }
+    })
+    form.addEventListener('change', function () {
+      if (hint.style.display !== 'none' && !missingField()) {
+        hint.textContent = ''
+        hint.style.display = 'none'
+      }
+    })
+  }
+
+  function bindSectionPaging() {    var host = document.getElementById('personalSections')
     if (!host) return
     host.addEventListener('click', function (event) {
       var target = event.target
@@ -375,6 +484,16 @@
     }
     wrapGlobal('renderPersonalView', function () { if (scope.active) applyAllUi() })
     wrapGlobal('renderRailState', function () { if (scope.active) markRail() })
+    // 创建弹窗默认带出当前迭代：否则下拉停在「未指定」，点创建只会弹一条容易被忽略的 toast
+    wrapGlobal('openCreateModal', function () {
+      var select = document.getElementById('createIteration')
+      if (!select || select.value) return
+      var want = preferredIteration()
+      if (!want) return
+      for (var i = 0; i < select.options.length; i += 1) {
+        if (select.options[i].value === want) { select.value = want; return }
+      }
+    })
   }
 
   function watchHeadActions() {
@@ -393,6 +512,7 @@
     buildRailButton()
     bindRailExit()
     ensureAssigneeUi()
+    enhanceCreateDialog()
     bindSectionPaging()
     watchHeadActions()
     scope.assignee = assigneeFromQuery() || readStored()
