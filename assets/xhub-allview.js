@@ -300,10 +300,76 @@
     return ''
   }
 
+  function describeCreateState() {
+    function val(id) {
+      var node = document.getElementById(id)
+      return node ? String(node.value == null ? '' : node.value).slice(0, 40) : ''
+    }
+    var info = {
+      pending: null,
+      title: val('createTitle'),
+      assignee: val('createAssigneeSearch'),
+      iteration: val('createIteration'),
+      type: val('createType'),
+    }
+    try {
+      info.pending = state ? state.pendingAction : null
+      info.writeAccess = typeof canWriteProject === 'function' ? Boolean(canWriteProject(state.currentProjectId)) : null
+    } catch (e) { info.stateError = e.message }
+    return info
+  }
+
+  // 诊断上报默认关闭：地址栏加 ?xhub-debug=1 才记录，避免平时写日志
+  var DEBUG_ENABLED = (function () {
+    try { return new URLSearchParams(location.search).get('xhub-debug') === '1' } catch (e) { return false }
+  })()
+
+  function reportDebug(kind, payload) {
+    if (!DEBUG_ENABLED) return
+    try {
+      if (!window.xhub || !window.xhub.service) return
+      window.xhub.service.request('/api/debug', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: kind, payload: payload || {} }),
+      }).catch(function () {})
+    } catch (e) { /* 忽略 */ }
+  }
+
+  function ensureCreateHint() {
+    var hint = document.getElementById('xhubCreateHint')
+    if (hint) return hint
+    var form = document.getElementById('createForm')
+    if (!form) return null
+    hint = document.createElement('div')
+    hint.id = 'xhubCreateHint'
+    hint.style.cssText = 'display:none;margin:0 18px 10px;padding:8px 10px;border-radius:8px;' +
+      'background:#fff1f0;color:#c0341d;border:1px solid #ffc9c0;font-size:12px;line-height:1.5;white-space:pre-wrap'
+    var actions = form.querySelector('.form-actions')
+    if (actions && actions.parentNode) actions.parentNode.insertBefore(hint, actions)
+    else form.appendChild(hint)
+    return hint
+  }
+
+  function showCreateError(message) {
+    var hint = ensureCreateHint()
+    if (!hint || !message) return
+    hint.textContent = '创建失败：' + message
+    hint.style.display = ''
+  }
+
   function enhanceCreateDialog() {
     var form = document.getElementById('createForm')
     if (!form || form.getAttribute('data-xhub-create') === '1') return
     form.setAttribute('data-xhub-create', '1')
+    // 关掉浏览器原生校验：它在 submit 之前就拦下表单，而扩展 iframe 里不显示提示气泡，
+    // 表现就是「点创建完全没反应」。交给 app 自己的校验 + 我们的常驻红字。
+    form.noValidate = true
+    try {
+      var nativeRequired = form.querySelectorAll('[required]')
+      for (var r = 0; r < nativeRequired.length; r += 1) nativeRequired[r].removeAttribute('required')
+    } catch (e) { /* 忽略 */ }
+    reportDebug('dialog-ready', { noValidate: form.noValidate })
 
     var hint = document.createElement('div')
     hint.id = 'xhubCreateHint'
@@ -363,16 +429,62 @@
       markInvalid(invalid)
       return hint.textContent
     }
+    // 兜底：创建弹窗打开时记录所有点击，防止"点到了别处"这种查不出来的情况
+    document.addEventListener('click', function (event) {
+      var modal = document.getElementById('createModal')
+      if (!modal || modal.classList.contains('hidden')) return
+      var node = event.target
+      reportDebug('modal-click', {
+        tag: node && node.tagName ? node.tagName : '',
+        id: node && node.id ? node.id : '',
+        cls: node && node.className ? String(node.className).slice(0, 40) : '',
+      })
+    }, true)
+
+    var submitFired = false
+    document.addEventListener('submit', function (event) {
+      if (event.target === form) submitFired = true
+    }, true)
+
     var submitBtn = document.getElementById('createSubmitBtn')
     if (submitBtn) {
       submitBtn.addEventListener('click', function () {
+        var invalid = form.querySelector(':invalid')
+        reportDebug('create-click', { valid: form.checkValidity(), invalid: invalid ? invalid.id : '', state: describeCreateState() })
         setTimeout(showInvalidHint, 0)
+        // 兜底：万一宿主环境里 submit 事件没触发（点了按钮却没提交），直接调创建逻辑。
+        // 同一 tick 里 submit 若已触发，submitFired 为真，这里跳过，避免重复创建。
+        submitFired = false
+        setTimeout(function () {
+          if (submitFired) return
+          reportDebug('submit-missing', describeCreateState())
+          try {
+            var pending = window.createWorkitem()
+            if (pending && typeof pending.catch === 'function') {
+              pending.catch(function (err) { showCreateError(err && err.message) })
+            }
+          } catch (e) {
+            showCreateError(e && e.message)
+          }
+        }, 0)
       }, true)
     }
     document.addEventListener('submit', function (event) {
       if (event.target !== form) return
       var msg = refreshHint()
-      if (!msg) showInvalidHint()
+      if (!msg) msg = showInvalidHint()
+      reportDebug('form-submit', {
+        message: msg || '',
+        hintDisplay: hint.style.display,
+        hintVisible: Boolean(hint.offsetParent),
+        hintRect: hint.getBoundingClientRect ? Math.round(hint.getBoundingClientRect().top) : -1,
+      })
+      setTimeout(function () {
+        reportDebug('after-submit', {
+          modalHidden: document.getElementById('createModal').classList.contains('hidden'),
+          pending: state ? state.pendingAction : null,
+        })
+      }, 1500)
     }, true)
     form.addEventListener('input', function () {
       if (hint.style.display !== 'none' && !missingField()) {
@@ -462,11 +574,13 @@
   function wrapGlobal(name, after) {
     var original = window[name]
     if (typeof original !== 'function') return
-    window[name] = function () {
+    var wrapped = function () {
       var result = original.apply(this, arguments)
       try { after(result) } catch (e) { /* 忽略 */ }
       return result
     }
+    wrapped.__xhubWrapped = true
+    window[name] = wrapped
   }
 
   function patchSubstance() {
@@ -484,6 +598,26 @@
     }
     wrapGlobal('renderPersonalView', function () { if (scope.active) applyAllUi() })
     wrapGlobal('renderRailState', function () { if (scope.active) markRail() })
+    // 创建结果上报：界面提示之外再写一份给后端，排查时不用靠回忆
+    wrapGlobal('createWorkitem', function (result) {
+      reportDebug('create-called', describeCreateState())
+      var info = describeCreateState()
+      if (result && typeof result.then === 'function') {
+        result.then(
+          function (detail) {
+            if (detail && detail.item && detail.item.key) reportDebug('create-ok', { key: detail.item.key })
+            else reportDebug('create-noop', describeCreateState())
+          },
+          function (err) {
+            reportDebug('create-fail', { message: err && err.message })
+            showCreateError(err && err.message)
+          }
+        )
+      } else {
+        reportDebug('create-noop', info)
+      }
+    })
+
     // 创建弹窗默认带出当前迭代：否则下拉停在「未指定」，点创建只会弹一条容易被忽略的 toast
     wrapGlobal('openCreateModal', function () {
       var select = document.getElementById('createIteration')
@@ -507,10 +641,16 @@
 
   function boot() {
     injectStyle()
+    // page-ready 在 patchSubstance 之后上报，才能反映包装是否生效
     patchSubstance()
     installSectionPaging()
     buildRailButton()
     bindRailExit()
+    reportDebug('page-ready', {
+      build: '0.4.6',
+      createWrapped: Boolean(window.createWorkitem && window.createWorkitem.__xhubWrapped),
+      allRail: Boolean(document.getElementById('xhubAllRailBtn')),
+    })
     ensureAssigneeUi()
     enhanceCreateDialog()
     bindSectionPaging()

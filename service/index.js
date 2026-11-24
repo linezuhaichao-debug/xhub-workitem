@@ -1,4 +1,4 @@
-'use strict'
+﻿'use strict'
 
 // com.mangrids.workitem 的 service 后端。
 //
@@ -326,6 +326,7 @@ function proxyToWorkitem(targetPath, payload) {
     const cached = proxyCacheGet(cacheKey)
     if (cached) return Promise.resolve(cached)
   }
+  const startedAt = Date.now()
   return new Promise((resolve) => {
     let bodyBuf = null
     if (payload.bodyBase64) bodyBuf = Buffer.from(String(payload.bodyBase64), 'base64')
@@ -377,6 +378,14 @@ function proxyToWorkitem(targetPath, payload) {
             bytes: buf.length,
           }
           if (cacheKey) proxyCacheSet(cacheKey, result, buf.length)
+          if (method !== 'GET' || result.status >= 400) {
+            log('proxy', method, targetPath, '->', result.status, `${Date.now() - startedAt}ms`,
+              bodyBuf ? `in=${bodyBuf.length}B` : '', `out=${buf.length}B`)
+            if (method !== 'GET' && isText) {
+              const preview = buf.toString('utf8').slice(0, 400)
+              log('proxy body', targetPath, preview)
+            }
+          }
           resolve(result)
         })
       }
@@ -650,6 +659,20 @@ const server = http.createServer(async (req, res) => {
     // 不阻塞请求：拉起 workitem 可能要十几秒，页面改用 /api/status 轮询，避免代理超时。
     ensure(options).catch((err) => log('ensure 异常：', err && err.message))
     sendJson(res, 200, { ...snapshot(), accepted: true })
+    return
+  }
+
+  if (pathname === '/api/debug' && req.method === 'POST') {
+    const { body } = await readBody(req, 256 * 1024)
+    const line = `${new Date().toISOString()} ${body}`
+    log('debug', body.slice(0, 4000))
+    try {
+      fs.mkdirSync(LOG_DIR, { recursive: true })
+      fs.appendFileSync(path.join(LOG_DIR, 'debug.log'), line + '\n')
+    } catch (_) {
+      /* 记不下来也不影响 */
+    }
+    sendJson(res, 200, { ok: true })
     return
   }
 
