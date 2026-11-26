@@ -662,6 +662,18 @@
     }
     wrapGlobal('renderPersonalView', function () { if (scope.active) applyAllUi() })
     wrapGlobal('renderRailState', function () { if (scope.active) markRail() })
+    // 刷新时 app 显式传 loadAll=false（只有 resource 才拉全量），
+    // 但「全部」视图的分区计数和需求子工单都基于 state.allItems，必须拉全量才不会显示旧数据。
+    var origLoadItems = window.loadItems
+    if (typeof origLoadItems === 'function') {
+      window.loadItems = function (options) {
+        if (scope.active) {
+          options = Object.assign({}, options || {}, { loadAll: true })
+        }
+        return origLoadItems.call(this, options)
+      }
+    }
+
     // 需求展开：全部视图里改成子工单列表，个人视图保持原来的甘特
     var origReqGantt = window.renderPersonalRequirementGantt
     if (typeof origReqGantt === 'function') {
