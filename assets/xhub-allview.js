@@ -219,6 +219,14 @@
         : '所有人的工单 · 可按执行人筛选'
     }
     toggleWriteButtons(true)
+    // 需求展开的提示文案：现在是子工单列表，不是甘特图
+    var carets = document.querySelectorAll('#personalSections .personal-req-caret')
+    for (var c = 0; c < carets.length; c += 1) {
+      carets[c].title = '展开/收起子工单'
+      carets[c].setAttribute('aria-label', '展开/收起子工单')
+    }
+    var reqRows = document.querySelectorAll('#personalSections tr[data-personal-req-row]')
+    for (var r2 = 0; r2 < reqRows.length; r2 += 1) reqRows[r2].title = '点击展开/收起子工单'
     markRail()
   }
 
