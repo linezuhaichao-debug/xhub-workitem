@@ -54,6 +54,19 @@
       'color:var(--muted);font-size:12px;}',      '.xhub-all-more button{font:inherit;color:var(--primary);background:var(--surface);border:1px solid var(--line-strong);',
       'border-radius:6px;padding:4px 12px;cursor:pointer;}',
       '.xhub-all-more button:hover{border-color:var(--primary);background:var(--primary-soft);}',
+      '.xhub-req-list{padding:8px 12px 12px;}',
+      '.xhub-req-list-head{color:var(--muted);font-size:12px;margin:4px 0 8px;}',
+      '.xhub-req-list-head b{color:var(--text);}',
+      '.xhub-req-list-wrap{max-height:420px;overflow:auto;border:1px solid var(--line);border-radius:8px;}',
+      '.xhub-req-list table{width:100%;border-collapse:collapse;font-size:12px;}',
+      '.xhub-req-list th,.xhub-req-list td{padding:6px 10px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap;}',
+      '.xhub-req-list th{position:sticky;top:0;z-index:1;background:var(--surface-soft);color:var(--muted);font-weight:500;}',
+      '.xhub-req-list tbody tr:last-child td{border-bottom:none;}',
+      '.xhub-req-list tr[data-personal-open]{cursor:pointer;}',
+      '.xhub-req-list tr[data-personal-open]:hover td{background:var(--surface-hover);}',
+      '.xhub-req-list td.key{font-family:"Cascadia Mono",Consolas,monospace;color:var(--muted);}',
+      '.xhub-req-list td.title{max-width:560px;overflow:hidden;text-overflow:ellipsis;}',
+      '.xhub-req-list td.done{color:var(--green);}',
     ].join('')
     document.head.appendChild(style)
   }
@@ -280,6 +293,49 @@
   }
 
   // ---- 创建工单弹窗：默认带出当前迭代，校验失败给常驻提示（toast 容易漏看） ----
+  function reqEscape(value) {
+    try { if (typeof escapeHtml === 'function') return escapeHtml(value == null ? '' : String(value)) } catch (e) { /* 忽略 */ }
+    return String(value == null ? '' : value).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    })
+  }
+
+  // 需求展开：用子工单列表代替甘特图
+  function buildReqChildrenHtml(requirementItem, descendants) {
+    var rows = Array.isArray(descendants) ? descendants.slice() : []
+    var scheduled = rows.filter(function (item) { return item.start_date && item.due_date })
+    var unscheduled = rows.filter(function (item) { return !(item.start_date && item.due_date) })
+    var sorted = scheduled.slice().sort(function (a, b) {
+      return String(a.start_date).localeCompare(String(b.start_date)) || String(a.key).localeCompare(String(b.key))
+    }).concat(unscheduled.slice().sort(function (a, b) { return String(a.key).localeCompare(String(b.key)) }))
+
+    var head = '<div class="xhub-req-list">'
+      + '<div class="xhub-req-list-head">子工单 <b>' + sorted.length + '</b>'
+      + ' · 已排期 ' + scheduled.length + ' · 未排期 ' + unscheduled.length
+      + '（点击行打开工单）</div>'
+    if (!sorted.length) {
+      return head + '<div class="personal-req-gantt-empty">该需求下暂无子工单</div></div>'
+    }
+    var body = sorted.map(function (item) {
+      var done = item.is_completed ? ' done' : ''
+      return '<tr data-personal-open="' + reqEscape(item.project_id) + '|' + reqEscape(item.key) + '"'
+        + ' title="' + reqEscape(item.title || '') + '">'
+        + '<td class="key">' + reqEscape(item.key) + '</td>'
+        + '<td class="title">' + reqEscape(item.title || '') + '</td>'
+        + '<td>' + reqEscape(item.assignee || item.assignee_login || '') + '</td>'
+        + '<td class="' + done.trim() + '">' + reqEscape(item.status || '') + '</td>'
+        + '<td>' + reqEscape(item.priority || '') + '</td>'
+        + '<td>' + reqEscape(item.iteration || '') + '</td>'
+        + '<td>' + reqEscape(item.start_date || '') + '</td>'
+        + '<td>' + reqEscape(item.due_date || '') + '</td>'
+        + '</tr>'
+    }).join('')
+    var table = '<div class="xhub-req-list-wrap"><table><thead><tr>'
+      + '<th>工单号</th><th>标题</th><th>执行人</th><th>状态</th><th>优先级</th><th>迭代</th><th>开始时间</th><th>截止时间</th>'
+      + '</tr></thead><tbody>' + body + '</tbody></table></div>'
+    return head + table + '</div>'
+  }
+
   function preferredIteration() {
     try {
       if (typeof personalSectionDefs !== 'undefined' && typeof loadPersonalSettings === 'function') {
@@ -598,6 +654,22 @@
     }
     wrapGlobal('renderPersonalView', function () { if (scope.active) applyAllUi() })
     wrapGlobal('renderRailState', function () { if (scope.active) markRail() })
+    // 需求展开：全部视图里改成子工单列表，个人视图保持原来的甘特
+    var origReqGantt = window.renderPersonalRequirementGantt
+    if (typeof origReqGantt === 'function') {
+      window.renderPersonalRequirementGantt = function (requirementItem, container) {
+        if (!scope.active || !container) return origReqGantt.apply(this, arguments)
+        try {
+          var descendants = typeof collectRequirementDescendants === 'function'
+            ? collectRequirementDescendants(requirementItem)
+            : []
+          container.innerHTML = buildReqChildrenHtml(requirementItem, descendants)
+        } catch (e) {
+          return origReqGantt.apply(this, arguments)
+        }
+      }
+    }
+
     // 创建结果上报：界面提示之外再写一份给后端，排查时不用靠回忆
     wrapGlobal('createWorkitem', function (result) {
       reportDebug('create-called', describeCreateState())
