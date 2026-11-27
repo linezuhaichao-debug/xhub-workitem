@@ -687,10 +687,9 @@
         if (document.hidden) return true
         if (state && state.pendingAction) return true
         if (document.querySelector('.modal-backdrop:not(.hidden)')) return true
+        // 正在输入（搜索框除外）就先不刷新，避免打断行内编辑 / 备注编辑
         var active = document.activeElement
-        if (active && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName) && active.closest) {
-          if (active.closest('#detailDrawer, .detail-drawer, .create-modal, #detailDrawerContent')) return true
-        }
+        if (active && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName) && active.id !== 'searchInput') return true
       } catch (e) { /* 忽略 */ }
       return false
     }
