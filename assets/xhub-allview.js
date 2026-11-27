@@ -667,12 +667,57 @@
     var origLoadItems = window.loadItems
     if (typeof origLoadItems === 'function') {
       window.loadItems = function (options) {
-        if (scope.active) {
+        // 个人视图与「全部」视图的分区列表/计数都读 state.allItems，
+        // 而 app 的刷新显式传 loadAll=false，只拉筛选列表 → 列表看起来没刷新。
+        var personalLike = scope.active || (state && state.activeModule === 'my')
+        if (personalLike) {
           options = Object.assign({}, options || {}, { loadAll: true })
         }
         return origLoadItems.call(this, options)
       }
     }
+
+    // 自动刷新：每 15 秒探一次「最近更新时间」，有变化就刷新列表（不用手动点刷新）
+    var AUTO_REFRESH_MS = 15000
+    var autoRefreshBusy = false
+    var autoRefreshStamp = ''
+
+    function autoRefreshBlocked() {
+      try {
+        if (document.hidden) return true
+        if (state && state.pendingAction) return true
+        if (document.querySelector('.modal-backdrop:not(.hidden)')) return true
+        var active = document.activeElement
+        if (active && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName) && active.closest) {
+          if (active.closest('#detailDrawer, .detail-drawer, .create-modal, #detailDrawerContent')) return true
+        }
+      } catch (e) { /* 忽略 */ }
+      return false
+    }
+
+    async function autoRefreshTick() {
+      if (autoRefreshBusy || autoRefreshBlocked()) return
+      if (!state || state.activeModule !== 'my') return
+      autoRefreshBusy = true
+      try {
+        var response = await fetch('/api/workitems?limit=1&sort=updated_at&order=desc')
+        if (!response.ok) return
+        var data = await response.json()
+        var first = data && data.items && data.items[0] ? data.items[0] : null
+        var stamp = String((data && data.total) || 0) + '|' + (first ? String(first.updated_at || '') + '|' + String(first.key || '') : '')
+        if (!autoRefreshStamp) { autoRefreshStamp = stamp; return }
+        if (stamp === autoRefreshStamp) return
+        autoRefreshStamp = stamp
+        await loadItems({ keepSelection: true, keepDrawer: true, loadAll: true })
+        if (scope.active) { applyAllUi(); refreshPersonal() }
+        if (typeof showToast === 'function') showToast('列表已更新', 2000)
+      } catch (e) {
+        /* 探测失败不影响使用 */
+      } finally {
+        autoRefreshBusy = false
+      }
+    }
+    setInterval(autoRefreshTick, AUTO_REFRESH_MS)
 
     // 需求展开：全部视图里改成子工单列表，个人视图保持原来的甘特
     var origReqGantt = window.renderPersonalRequirementGantt
